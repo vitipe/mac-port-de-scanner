@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Scanner</string>
+	<key>CFBundleDisplayName</key>
+	<string>Scanner</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.vhpenas.scanner</string>
+	<key>CFBundleExecutable</key>
+	<string>Scanner</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>es</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Carpeta</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.folder</string>
+				<string>public.volume</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Scanner mide cuánto ocupa cada carpeta para mostrarlo en el gráfico.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Scanner mide cuánto ocupa cada carpeta para mostrarlo en el gráfico.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Scanner mide cuánto ocupa cada carpeta para mostrarlo en el gráfico.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Scanner mide cuánto ocupa cada carpeta para mostrarlo en el gráfico.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Scanner mide cuánto ocupa cada carpeta para mostrarlo en el gráfico.</string>
+</dict>
+</plist>
