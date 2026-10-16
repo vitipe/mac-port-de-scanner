@@ -2,7 +2,8 @@ import Foundation
 
 enum Format {
     static func bytes(_ count: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+        // "0 KB" en vez de "Zero KB".
+        count.formatted(.byteCount(style: .file, spellsOutZero: false))
     }
 
     static func files(_ count: Int) -> String {

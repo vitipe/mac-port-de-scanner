@@ -1,7 +1,8 @@
 import ScannerCore
 import SwiftUI
 
-/// El gráfico de anillos de la carpeta enfocada, con hover, clic y menú contextual.
+/// El gráfico de anillos de la carpeta enfocada, con hover, clic, menú contextual
+/// y la animación de zoom.
 struct ChartView: View {
     let focus: FileNode
     @Environment(ScanSession.self) private var session
@@ -9,19 +10,31 @@ struct ChartView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let layout = session.layout(for: focus, in: geometry.size)
-            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2)
+            let size = geometry.size
+            let layout = session.layout(for: focus, in: size)
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
             let hover = session.hover
+            let transition = session.zoomTransition
+            let style = Style(byType: session.colorByType, dark: colorScheme == .dark,
+                              highlighted: session.highlightedCategory)
 
             ZStack {
-                Canvas { context, _ in
-                    draw(layout, center: center, hover: hover, in: &context)
+                // El reloj solo corre durante la animación de zoom.
+                TimelineView(.animation(paused: transition == nil)) { timeline in
+                    Canvas { context, _ in
+                        if let transition, let frame = zoomFrame(transition, at: timeline.date, size: size) {
+                            drawZoom(frame, center: center, style: style, in: &context)
+                        } else {
+                            draw(layout, center: center, hover: hover, style: style, in: &context)
+                        }
+                    }
                 }
                 CenterLabel(focus: focus, hover: hover, width: layout.innerRadius * 1.5)
                     .position(center)
                     .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
+            .pointerStyle(isClickable(hover) ? .link : nil)
             .onContinuousHover(coordinateSpace: .local) { phase in
                 switch phase {
                 case .active(let location):
@@ -47,6 +60,19 @@ struct ChartView: View {
                     NodeMenu(node: focus, isFocus: true)
                 }
             }
+            .task(id: transition?.start) {
+                guard let transition else { return }
+                try? await Task.sleep(for: .seconds(ZoomTransition.duration))
+                session.endZoomTransition(transition)
+            }
+        }
+    }
+
+    private func isClickable(_ hover: ChartHover?) -> Bool {
+        switch hover {
+        case .center: focus.parent != nil
+        case .arc(let arc): arc.node.map { $0.isDirectory && !$0.children.isEmpty } ?? false
+        case nil: false
         }
     }
 
@@ -60,24 +86,22 @@ struct ChartView: View {
 
     // MARK: - Dibujo
 
-    private func draw(_ layout: SunburstLayout, center: CGPoint, hover: ChartHover?, in context: inout GraphicsContext) {
-        let dark = colorScheme == .dark
-        let hovered = hover?.arc
+    private struct Style {
+        let byType: Bool
+        let dark: Bool
+        let highlighted: FileCategory?
+    }
 
-        let centerDisc = Path(ellipseIn: CGRect(
-            x: center.x - layout.innerRadius + 3, y: center.y - layout.innerRadius + 3,
-            width: (layout.innerRadius - 3) * 2, height: (layout.innerRadius - 3) * 2
-        ))
-        let canGoUp = focus.parent != nil
-        context.fill(centerDisc, with: .color(.primary.opacity(hover == .center && canGoUp ? 0.09 : 0.045)))
+    private func draw(_ layout: SunburstLayout, center: CGPoint, hover: ChartHover?, style: Style, in context: inout GraphicsContext) {
+        let hovered = hover?.arc
+        drawCenterDisc(layout, center: center, highlighted: hover == .center && focus.parent != nil, in: &context)
 
         for ring in layout.rings {
             for arc in ring {
                 let inner = layout.innerRadius + layout.ringWidth * Double(arc.depth)
                 let path = Self.sector(center: center, inner: inner, outer: inner + layout.ringWidth, start: arc.start, end: arc.end)
-                let dimmed = hovered.map { !arc.isWithin($0) } ?? false
-                let color = Palette.color(for: arc, contentSpan: layout.contentSpan, dark: dark)
-                context.fill(path, with: .color(color.opacity(dimmed ? 0.5 : 1)))
+                let color = Palette.color(for: arc, in: layout, byType: style.byType, dark: style.dark)
+                context.fill(path, with: .color(color.opacity(isDimmed(arc, hovered: hovered, style: style) ? 0.4 : 1)))
                 if arc.node?.kind == .free {
                     context.stroke(path, with: .color(.secondary.opacity(0.5)), style: StrokeStyle(lineWidth: 0.75, dash: [3, 3]))
                 }
@@ -88,6 +112,109 @@ struct ChartView: View {
             let inner = layout.innerRadius + layout.ringWidth * Double(hovered.depth)
             let path = Self.sector(center: center, inner: inner, outer: inner + layout.ringWidth, start: hovered.start, end: hovered.end)
             context.stroke(path, with: .color(.primary.opacity(0.55)), lineWidth: 1.25)
+        }
+    }
+
+    private func isDimmed(_ arc: SunburstArc, hovered: SunburstArc?, style: Style) -> Bool {
+        if let hovered { return !arc.isWithin(hovered) }
+        if let category = style.highlighted, style.byType {
+            guard let node = arc.node, !node.isSynthetic else { return true }
+            return (node.isDirectory ? node.dominantCategory : node.category) != category
+        }
+        return false
+    }
+
+    private func drawCenterDisc(_ layout: SunburstLayout, center: CGPoint, highlighted: Bool, in context: inout GraphicsContext) {
+        let radius = layout.innerRadius - 3
+        let disc = Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+        context.fill(disc, with: .color(.primary.opacity(highlighted ? 0.09 : 0.045)))
+    }
+
+    // MARK: - Animación de zoom
+
+    /// Un cuadro de la animación. El layout "interior" es el de la carpeta más profunda:
+    /// con `progress` 0 se dibuja donde estaba dentro del exterior, con 1 ocupa todo.
+    private struct ZoomFrame {
+        let outer: SunburstLayout
+        let inner: SunburstLayout
+        /// El arco de la carpeta interior dentro del exterior; `nil` si no se veía
+        /// (o no están relacionadas): entonces se funden sin moverse.
+        let anchor: SunburstArc?
+        let progress: Double
+    }
+
+    private func zoomFrame(_ transition: ZoomTransition, at date: Date, size: CGSize) -> ZoomFrame? {
+        var t = (date.timeIntervalSince(transition.start) / ZoomTransition.duration).clamped(to: 0...1)
+        #if DEBUG
+        if let frozen = session.debugFrozenZoomProgress { t = frozen }
+        #endif
+        guard t < 1 else { return nil }
+        // easeInOutCubic
+        let eased = t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
+        let zoomingOut = transition.from.isDescendant(of: transition.to)
+        let outerNode = zoomingOut ? transition.to : transition.from
+        let innerNode = zoomingOut ? transition.from : transition.to
+        let outer = session.layout(for: outerNode, in: size)
+        let inner = session.layout(for: innerNode, in: size)
+        let related = innerNode.isDescendant(of: outerNode)
+        return ZoomFrame(
+            outer: outer,
+            inner: inner,
+            anchor: related ? outer.arc(for: innerNode) : nil,
+            progress: zoomingOut ? 1 - eased : eased
+        )
+    }
+
+    private func drawZoom(_ frame: ZoomFrame, center: CGPoint, style: Style, in context: inout GraphicsContext) {
+        let outer = frame.outer
+        let inner = frame.inner
+        let p = frame.progress
+        drawCenterDisc(inner, center: center, highlighted: false, in: &context)
+        // Los anillos que entran desde afuera no se salen del círculo.
+        let limit = outer.outerRadius + 1
+        context.clip(to: Path(ellipseIn: CGRect(x: center.x - limit, y: center.y - limit, width: limit * 2, height: limit * 2)))
+
+        // Exterior: se desvanece, salvo lo que está dentro del interior (lo dibuja el interior).
+        let outerOpacity = 1 - p
+        if outerOpacity > 0.01 {
+            for ring in outer.rings {
+                for arc in ring {
+                    if let anchor = frame.anchor, arc.depth > anchor.depth, arc.owner.isDescendant(of: inner.focus) { continue }
+                    let r = outer.innerRadius + outer.ringWidth * Double(arc.depth)
+                    let path = Self.sector(center: center, inner: r, outer: r + outer.ringWidth, start: arc.start, end: arc.end)
+                    let color = Palette.color(for: arc, in: outer, byType: style.byType, dark: style.dark)
+                    context.fill(path, with: .color(color.opacity(outerOpacity)))
+                }
+            }
+        }
+
+        // Interior: de su lugar dentro del exterior a ocupar todo el círculo.
+        let twoPi = 2 * Double.pi
+        let innerOpacity = frame.anchor == nil ? p : 1
+        for ring in inner.rings {
+            for arc in ring {
+                var start = arc.start
+                var end = arc.end
+                var depth = Double(arc.depth)
+                var position = arc.mid / inner.contentSpan
+                if let anchor = frame.anchor {
+                    let span = anchor.end - anchor.start
+                    let embeddedStart = anchor.start + arc.start / twoPi * span
+                    let embeddedEnd = anchor.start + arc.end / twoPi * span
+                    let embeddedDepth = Double(anchor.depth + 1 + arc.depth)
+                    let embeddedPosition = (embeddedStart + embeddedEnd) / 2 / outer.contentSpan
+                    start = embeddedStart + (start - embeddedStart) * p
+                    end = embeddedEnd + (end - embeddedEnd) * p
+                    depth = embeddedDepth + (depth - embeddedDepth) * p
+                    position = embeddedPosition + (position - embeddedPosition) * p
+                }
+                let r = inner.innerRadius + inner.ringWidth * depth
+                // Lo que todavía es una astilla no vale la pena dibujarlo.
+                guard (end - start) * r > 0.3, r < limit else { continue }
+                let path = Self.sector(center: center, inner: r, outer: r + inner.ringWidth, start: start, end: end)
+                let color = Palette.color(for: arc.node, position: position, depth: depth, byType: style.byType, dark: style.dark)
+                context.fill(path, with: .color(color.opacity(innerOpacity)))
+            }
         }
     }
 
@@ -113,12 +240,16 @@ struct ChartView: View {
         path.addArc(center: center, radius: r1, startAngle: s, endAngle: e, clockwise: false)
         if full {
             path.closeSubpath()
-            path.addArc(center: center, radius: r0, startAngle: e, endAngle: s, clockwise: true)
-        } else {
-            path.addArc(center: center, radius: r0, startAngle: e, endAngle: s, clockwise: true)
         }
+        path.addArc(center: center, radius: r0, startAngle: e, endAngle: s, clockwise: true)
         path.closeSubpath()
         return path
+    }
+}
+
+private extension Double {
+    func clamped(to range: ClosedRange<Double>) -> Double {
+        Swift.min(Swift.max(self, range.lowerBound), range.upperBound)
     }
 }
 
@@ -137,6 +268,7 @@ private struct CenterLabel: View {
             Text(Format.bytes(size))
                 .font(.system(size: width > 150 ? 22 : 17, weight: .medium, design: .rounded))
                 .monospacedDigit()
+                .contentTransition(.numericText())
             Text(subtitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -179,7 +311,7 @@ struct NodeMenu: View {
     @Environment(ScanSession.self) private var session
 
     var body: some View {
-        if node.isDirectory && !isFocus {
+        if node.isDirectory && !isFocus && !node.children.isEmpty {
             Button("Acercar") { session.zoom(to: node) }
         }
         Button("Abrir") { session.openItem(node) }

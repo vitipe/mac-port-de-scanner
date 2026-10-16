@@ -29,12 +29,28 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Scanner" "$APP/Contents/MacOS/Scanner"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp build/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-codesign --force --sign - "$APP"
+
+# Firma: con el certificado local si existe (ver scripts/setup-signing.sh), así
+# macOS recuerda los permisos entre compilaciones; si no, ad-hoc.
+SIGNING_DIR="$HOME/Library/Application Support/com.vhpenas.scanner.signing"
+if [[ -f "$SIGNING_DIR/signing.keychain-db" ]]; then
+    security unlock-keychain -p "$(cat "$SIGNING_DIR/password")" "$SIGNING_DIR/signing.keychain-db"
+    codesign --force --timestamp=none --sign "Scanner Local Signing" \
+        --keychain "$SIGNING_DIR/signing.keychain-db" "$APP"
+else
+    codesign --force --sign - "$APP"
+    echo "Aviso: firma ad-hoc. Corré scripts/setup-signing.sh una vez para que macOS"
+    echo "recuerde el permiso de Acceso total al disco entre compilaciones."
+fi
 echo "Listo: $APP"
 
 if [[ "${1:-}" == "--install" ]]; then
     mkdir -p ~/Applications
     rm -rf ~/Applications/Scanner.app
     cp -R "$APP" ~/Applications/
+    # Registra la app y su servicio "Analizar con Scanner" del menú de Finder.
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+        -f ~/Applications/Scanner.app
+    /System/Library/CoreServices/pbs -update
     echo "Instalado en ~/Applications/Scanner.app"
 fi

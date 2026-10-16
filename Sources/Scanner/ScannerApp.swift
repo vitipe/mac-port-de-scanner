@@ -39,12 +39,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Servicio "Analizar con Scanner" del menú contextual de Finder (como la entrada
+    /// del menú del Explorador que agregaba el original).
+    @objc func analyzeFolder(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        guard !urls.isEmpty else {
+            error.pointee = "No llegó ninguna carpeta."
+            return
+        }
+        application(NSApp, open: urls)
+    }
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApp.servicesProvider = self
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         didLaunch = true
         NSApp.setActivationPolicy(.regular)
         showMainWindow()
         NSApp.activate()
-        session.start(initialFolder: pendingFolder ?? Self.folderArgument())
+        // Un instante de espera: si la app se abrió para analizar una carpeta (Finder,
+        // servicio), ese pedido llega ahora y no hace falta escanear el disco entero.
+        let folder = pendingFolder ?? Self.folderArgument()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [session] in
+            session.start(initialFolder: folder)
+        }
         #if DEBUG
         scheduleDebugSnapshot()
         #endif
@@ -67,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window.styleMask.insert(.fullSizeContentView)
             window.toolbarStyle = .unified
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 1000, height: 740))
+            window.setContentSize(NSSize(width: 1200, height: 760))
             window.center()
             window.setFrameAutosaveName("MainWindow")
             self.window = window
@@ -115,6 +135,13 @@ struct ScannerCommands: Commands {
                 .disabled(session.scan == nil)
             Divider()
             Button("Acceso total al disco…") { ScanSession.openFullDiskAccessSettings() }
+        }
+        CommandGroup(before: .toolbar) {
+            Toggle("Colorear por tipo", isOn: Binding(get: { session.colorByType }, set: { session.colorByType = $0 }))
+                .keyboardShortcut("t")
+            Toggle("Mostrar detalles", isOn: Binding(get: { session.showsInspector }, set: { session.showsInspector = $0 }))
+                .keyboardShortcut("i", modifiers: [.command, .option])
+            Divider()
         }
     }
 }

@@ -32,16 +32,15 @@ struct InfoBar: View {
                 Button {
                     ScanSession.openFullDiskAccessSettings()
                 } label: {
-                    Label(
-                        session.inaccessibleCount == 1
-                            ? "1 carpeta sin acceso"
-                            : "\(session.inaccessibleCount.formatted()) carpetas sin acceso",
-                        systemImage: "lock"
-                    )
+                    Label("\(session.inaccessibleCount.formatted()) sin acceso", systemImage: "lock")
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(.secondary)
-                .help("Algunas carpetas no se pudieron leer. Dale a Scanner “Acceso total al disco” en Ajustes del Sistema para incluirlas.")
+                .fixedSize()
+                .help("""
+                    \(session.inaccessibleCount == 1 ? "1 carpeta no se pudo leer" : "\(session.inaccessibleCount.formatted()) carpetas no se pudieron leer"). \
+                    Dale a Scanner “Acceso total al disco” en Ajustes del Sistema para incluirlas.
+                    """)
             }
         }
         .font(.callout)
@@ -56,16 +55,27 @@ struct InfoBar: View {
     @ViewBuilder
     private func details(for arc: SunburstArc, in focus: FileNode) -> some View {
         Circle()
-            .fill(Palette.color(for: arc, contentSpan: session.contentSpan, dark: colorScheme == .dark))
+            .fill(Palette.color(for: arc.node, position: arc.mid / session.contentSpan, depth: Double(arc.depth),
+                                byType: session.colorByType, dark: colorScheme == .dark))
             .overlay(Circle().strokeBorder(.secondary.opacity(0.4), lineWidth: 0.5))
             .frame(width: 10, height: 10)
         switch arc.content {
         case .node(let node):
             Text(node.name).fontWeight(.medium)
+                .layoutPriority(2)
             Text(summary(size: node.size, of: focus, files: node.isDirectory ? node.fileCount : nil))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-            if !node.isSynthetic {
+                .layoutPriority(1)
+            if node.isSynthetic {
+                if let note = session.note(for: node) {
+                    Text(note).foregroundStyle(.tertiary)
+                }
+            } else {
+                if session.colorByType {
+                    Text((node.isDirectory ? node.dominantCategory : node.category).name)
+                        .foregroundStyle(.secondary)
+                }
                 Text(node.displayPath)
                     .foregroundStyle(.tertiary)
                     .truncationMode(.middle)

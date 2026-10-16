@@ -55,7 +55,9 @@ public enum DiskScanner {
         root.setBasePath(path, display: displayPath ?? path)
         if isDirectory {
             let context = Context(device: st.st_dev, progress: progress)
-            scanDirectory(root, path: path, depth: 0, context: context)
+            scanDirectory(root, path: path, depth: 0, inherited: FileCategory.forDirectory(named: name), context: context)
+        } else {
+            root.category = FileCategory.forFile(named: name)
         }
         return progress.isCancelled ? nil : root
     }
@@ -102,8 +104,13 @@ public enum DiskScanner {
         path.hasSuffix("/") ? path + name : path + "/" + name
     }
 
-    private static func scanDirectory(_ node: FileNode, path: String, depth: Int, context: Context) {
+    /// - Parameter inherited: categoría que impone una carpeta contenedora (un `.app`,
+    ///   `node_modules`…) a todo lo que tiene adentro.
+    private static func scanDirectory(_ node: FileNode, path: String, depth: Int, inherited: FileCategory?, context: Context) {
         let progress = context.progress
+        var categorySizes = [Int64](repeating: 0, count: FileCategory.allCases.count)
+        categorySizes[Int((inherited ?? .other).rawValue)] = node.size
+        node.categorySizes = categorySizes
         guard !progress.isCancelled, depth < maxDepth else { return }
         progress.setCurrentPath(path)
 
@@ -143,7 +150,10 @@ public enum DiskScanner {
                 fileCount += 1
                 fileBytes += size
                 if size > 0 {
-                    files.append(FileNode(name: String(cString: cName), kind: .file, size: size, fileCount: 1))
+                    let file = FileNode(name: String(cString: cName), kind: .file, size: size, fileCount: 1)
+                    file.category = inherited ?? FileCategory.forFile(named: file.name)
+                    categorySizes[Int(file.category.rawValue)] += size
+                    files.append(file)
                 }
             }
         }
@@ -152,16 +162,22 @@ public enum DiskScanner {
         let directories = subdirectories + unscannedDirectories
         progress.add(files: fileCount, bytes: fileBytes + directories.reduce(0) { $0 + $1.size })
 
+        @Sendable func scanChild(_ child: FileNode) {
+            let category = inherited ?? FileCategory.forDirectory(named: child.name)
+            scanDirectory(child, path: join(path, child.name), depth: depth + 1, inherited: category, context: context)
+        }
         let scanList = subdirectories
         if depth < parallelDepth && scanList.count > 1 {
             DispatchQueue.concurrentPerform(iterations: scanList.count) { index in
-                let child = scanList[index]
-                scanDirectory(child, path: join(path, child.name), depth: depth + 1, context: context)
+                scanChild(scanList[index])
             }
         } else {
-            for child in scanList {
-                scanDirectory(child, path: join(path, child.name), depth: depth + 1, context: context)
-            }
+            for child in scanList { scanChild(child) }
+        }
+        for child in unscannedDirectories {
+            var sizes = [Int64](repeating: 0, count: categorySizes.count)
+            sizes[Int((inherited ?? FileCategory.forDirectory(named: child.name) ?? .other).rawValue)] = child.size
+            child.categorySizes = sizes
         }
 
         var totalSize = node.size + fileBytes
@@ -169,12 +185,16 @@ public enum DiskScanner {
         for directory in directories {
             totalSize += directory.size
             totalFiles += directory.fileCount
+            if let sizes = directory.categorySizes {
+                for index in sizes.indices { categorySizes[index] += sizes[index] }
+            }
         }
         var children = directories + files
         for child in children { child.parent = node }
         children.sort(by: FileNode.ordered)
         node.children = children
         node.size = totalSize
-        node.fileCount = totalFiles
+        node.setFileCount(totalFiles)
+        node.categorySizes = categorySizes
     }
 }

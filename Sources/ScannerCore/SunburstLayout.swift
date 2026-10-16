@@ -43,7 +43,7 @@ public struct SunburstArc: Sendable, Equatable {
     /// Si este arco es `other` o está dentro de él en el gráfico.
     public func isWithin(_ other: SunburstArc) -> Bool {
         if self == other { return true }
-        guard let ancestor = other.node, ancestor.isDirectory, depth > other.depth else { return false }
+        guard let ancestor = other.node, !ancestor.children.isEmpty, depth > other.depth else { return false }
         return owner.isDescendant(of: ancestor)
     }
 
@@ -116,7 +116,7 @@ public struct SunburstLayout: Sendable {
             }
             if childSpan > 0 {
                 rings[depth].append(SunburstArc(content: .node(child), depth: depth, start: angle, end: angle + childSpan))
-                if child.isDirectory {
+                if !child.children.isEmpty {
                     place(child, depth: depth + 1, start: angle, span: childSpan, minArcLength: minArcLength)
                 }
             }
@@ -129,6 +129,19 @@ public struct SunburstLayout: Sendable {
     public static func angle(x: Double, y: Double) -> Double {
         let angle = atan2(x, -y)
         return angle < 0 ? angle + 2 * .pi : angle
+    }
+
+    /// El arco de `node`, si está dibujado (es descendiente del foco y no es muy chico).
+    public func arc(for node: FileNode) -> SunburstArc? {
+        var depth = -1
+        var current = node
+        while current !== focus {
+            guard let parent = current.parent else { return nil }
+            current = parent
+            depth += 1
+        }
+        guard depth >= 0, depth < ringCount else { return nil }
+        return rings[depth].first { $0.node === node }
     }
 
     public func arc(radius: Double, angle: Double) -> SunburstArc? {
