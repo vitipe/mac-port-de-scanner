@@ -261,18 +261,26 @@ private struct CenterLabel: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(2)
-                .truncationMode(.middle)
+            // En una línea si entra, aunque sea con letra algo más chica; si no, en dos.
+            ViewThatFits(in: .horizontal) {
+                Text(title).font(.system(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
+                Text(title).font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
             Text(Format.bytes(size))
                 .font(.system(size: width > 150 ? 22 : 17, weight: .medium, design: .rounded))
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
                 .contentTransition(.numericText())
             Text(subtitle)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
         .multilineTextAlignment(.center)
         .frame(width: width)
@@ -299,7 +307,7 @@ private struct CenterLabel: View {
         case .center where focus.parent != nil:
             return "↑ Carpeta superior"
         default:
-            return Format.files(focus.fileCount)
+            return Format.filesCompact(focus.fileCount)
         }
     }
 }

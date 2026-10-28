@@ -8,6 +8,7 @@ import ScannerCore
 ///   SCANNER_SNAPSHOT_HOVER_NAME=<nombre> o sobre el arco con ese nombre
 ///   SCANNER_SNAPSHOT_ZOOM_T=<0…1>       congela la animación de zoom hacia la primera subcarpeta
 ///   SCANNER_SNAPSHOT_FOCUS=<ruta>       enfoca esa carpeta antes de capturar
+///   SCANNER_WINDOW_SIZE=<ancho>x<alto>  tamaño del contenido de la ventana
 ///   SCANNER_COLOR_BY_TYPE=0|1, SCANNER_INSPECTOR=0|1, SCANNER_APPEARANCE=dark|light
 ///   SCANNER_SNAPSHOT_QUIT=1             cerrar después
 extension AppDelegate {
@@ -20,6 +21,10 @@ extension AppDelegate {
         if let value = env["SCANNER_INSPECTOR"] { session.showsInspector = value == "1" }
         guard let path = env["SCANNER_SNAPSHOT"] else { return }
         Task { @MainActor in
+            if let size = env["SCANNER_WINDOW_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2 {
+                try? await Task.sleep(for: .milliseconds(300))
+                window?.setContentSize(NSSize(width: size[0], height: size[1]))
+            }
             while session.scan != nil || session.focus == nil {
                 try? await Task.sleep(for: .milliseconds(200))
             }
